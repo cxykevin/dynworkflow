@@ -615,6 +615,8 @@ class Flow:
 
     def run(self, *tasks: Execute) -> NoReturn:
         """Node.run() 在 fork 子进程执行工作流，主进程监听 stdin JSONL。"""
+        sys.stdout.write("\x1edynworkflow\x1f\n")
+        sys.stdout.flush()
         self._report = True
         if self._reporter is None:
             self._reporter = optional_reporter(True)

@@ -509,7 +509,7 @@ class AgentClient:
     def _initialize(self, connection: _ACPConnection | _ACPWebSocketConnection) -> InitializeResult:
         params: InitializeParams = {
             "protocolVersion": self.protocol_version,
-            "capabilities": {},
+            "capabilities": {"dyn.cxykevin.top": {}},
             "info": {"name": "dynworkflow", "title": "dynworkflow", "version": "0.1.0"},
         }
         result = connection.request("initialize", cast(JsonObject, params))
@@ -531,6 +531,8 @@ class AgentClient:
             "cwd": str(pathlib.Path(cwd).expanduser().resolve()),
             "mcpServers": [] if mcp_servers is None else mcp_servers,
         }
+        # The extension field is ACP metadata at the session params root.
+        cast(JsonObject, params)["dyn.cxykevin.top/hidden"] = True
         return params
 
     @staticmethod

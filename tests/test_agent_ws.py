@@ -79,3 +79,6 @@ def test_websocket_acp_v2_lifecycle(ws_server: Any) -> None:
     assert methods == ["initialize", "initialized", "session/new", "session/prompt"]
     initialize = ws_server.handler.received[0]
     assert initialize["params"]["protocolVersion"] == 2
+    assert initialize["params"]["capabilities"] == {"dyn.cxykevin.top": {}}
+    session_new = ws_server.handler.received[2]
+    assert session_new["params"]["dyn.cxykevin.top/hidden"] is True

@@ -78,6 +78,11 @@ def test_acp_v2_lifecycle_status_and_tool(fake_agent: Path, tmp_path: Path) -> N
     }]
 
 
+def test_client_advertises_dyn_capability_and_hidden_session(fake_agent: Path, tmp_path: Path) -> None:
+    acp = AgentClient(f"{sys.executable} {fake_agent}", timeout=2)
+    acp.run("inspect", cwd=tmp_path)
+
+
 def test_agent_reuse_has_fresh_status(fake_agent: Path, tmp_path: Path) -> None:
     acp = AgentClient(f"{sys.executable} {fake_agent}", timeout=2)
     agent = Agent("repeat", path=tmp_path)
