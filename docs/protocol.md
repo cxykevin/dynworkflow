@@ -59,7 +59,7 @@
 {"type":"graph","time":"...","workflow":"flow-1","graph":{"nodes":{},"edges":{},"start":[]}}
 ```
 
-`graph` 包含 `nodes`、`edges` 和 `start`。
+`graph` 包含 `nodes`、`edges` 和 `start`。`nodes` 的键是节点 id（节点函数名），值里的 `name` 是 `@flow.node("...")` 的显示名。
 
 ### node
 
@@ -70,6 +70,16 @@
 ```
 
 `state` 通常为 `running`、`done` 或 `error`。`cached` 表示是否命中缓存，`args` 包含节点已填充的参数。
+
+### node_result
+
+节点函数返回 `Result(value)` 时发送（缓存命中重放同样发送），携带该节点的终值。
+
+```json
+{"type":"node_result","time":"...","workflow":"flow-1","nodeId":"scan_docs","result":"..."}
+```
+
+`result` 为 `Result` 携带的值；不可 JSON 序列化时序列化为字符串。返回 `None` 或只返回下游任务的节点不发送该事件。
 
 ### agents_start
 

@@ -182,6 +182,13 @@ class Node():
         flow._reporter.report_node(flow._workflow_id, self._node_id,
                                    state.value, args, cached=cached)
 
+    def _report_result(self, flow: 'Flow', value: Any) -> None:
+        "_report_result() 推送一次节点终值事件（未启用上报时为空操作）"
+        if flow._reporter is None:
+            return
+        flow._reporter.report_node_result(flow._workflow_id, self._node_id,
+                                          value)
+
     def _run(self, flow: 'Flow') -> None:
         "Node.run() 执行节点，并把异常延迟到工作流结束统一抛出。"
         try:
@@ -315,7 +322,10 @@ class Node():
             return
         # 返回值处理
         if isinstance(ret, Result):
-            flow._result[self._node_id] = ret.result()
+            value = ret.result()
+            flow._result[self._node_id] = value
+            # 推送：节点终值（宿主据此在 workflow 视图里展示 Result）
+            self._report_result(flow, value)
             return
 
         # 执行流程下一步
@@ -330,7 +340,10 @@ class Node():
         if kind == "none":
             return
         if kind == "result":
-            flow._result[self._node_id] = cached.get("value")
+            value = cached.get("value")
+            flow._result[self._node_id] = value
+            # 缓存命中同样上报终值，宿主视图与真实执行保持一致
+            self._report_result(flow, value)
             return
         if kind == "executes":
             known = {node._node_id: node for node in flow._nodes}
@@ -579,7 +592,7 @@ class Flow:
         return {
             "nodes": {
                 node._node_id: {  # 节点信息
-                    "name": node._node_id,
+                    "name": node._node_name,  # 显示名（@flow.node("...") 的名字）
                 } for node in self._nodes
             },
             "edges": edges,

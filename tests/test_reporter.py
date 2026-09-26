@@ -96,19 +96,25 @@ def test_flow_execute_reports_graph_then_node_and_agents(
 
     flow.execute(n())
     events = _all_events(capsys.readouterr().out)
-    # graph → 节点 running → 广播源码 → 启动 agents 前 → agent 状态 → done
+    # graph → 节点 running → 广播源码 → 启动 agents 前 → agent 状态 → done → 终值
     assert [e["type"] for e in events] == [
         "graph", "node", "node_code", "agents_start",
-        "agent", "agent", "agent", "node"]
+        "agent", "agent", "agent", "node", "node_result"]
     code_event = events[2]
     assert code_event["type"] == "node_code"
     assert code_event["nodeId"] == "n"
     assert 'yield Agent("p")' in cast(str, code_event["code"])
     assert events[0]["workflow"] == "wf"
-    node_running, node_done = events[1], events[-1]
+    node_running = next(e for e in events
+                        if e["type"] == "node" and e["state"] == "running")
+    node_done = next(e for e in events
+                     if e["type"] == "node" and e["state"] == "done")
     assert (node_running["state"], node_running["cached"],
             node_running["args"]) == ("running", False, {})
     assert node_done["state"] == "done"
+    result_event = next(e for e in events if e["type"] == "node_result")
+    assert (result_event["nodeId"], result_event["workflow"],
+            result_event["result"]) == ("n", "wf", "ok")
     start = events[3]
     assert (start["nodeId"], start["callIndex"],
             start["count"], start["prompts"]) == ("n", 1, 1, ["p"])
@@ -158,6 +164,9 @@ def test_cached_node_reports_status_and_args(
     assert node_events[0]["args"] == {"x": 1}
     # 结果确实来自缓存而非第二次真实执行
     assert second_flow._result["n"] == "v1"
+    # 缓存命中同样上报终值，宿主视图能拿到 Result
+    assert [(e["nodeId"], e["result"])
+            for e in events if e["type"] == "node_result"] == [("n", "v1")]
 
 
 def test_agents_start_and_indices_reported(
@@ -373,3 +382,35 @@ def test_env_var_enables_reporting(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ALKAID0_WORKFLOW_REPORT")
     assert Flow("wf", cache=False)._report is False
     assert Flow("wf", cache=False, report=True)._report is True
+
+
+def test_report_node_result_serializes_non_json_values() -> None:
+    buf = io.StringIO()
+    reporter = StatusReporter(buf)
+    reporter.report_node_result("wf", "n", {"value": object()})
+    (event,) = _all_events(buf.getvalue())
+    assert event["type"] == "node_result"
+    assert event["workflow"] == "wf"
+    assert event["nodeId"] == "n"
+    # 不可 JSON 序列化的值由 default=str 兜底，而不是抛异常
+    assert isinstance(event["result"]["value"], str)
+
+
+def test_graph_nodes_use_display_name(
+        tmp_path: Any, monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.chdir(tmp_path)
+    flow = Flow("wfd", agent=cast(AgentClientInterface, FakeACP()),
+                cache=False, report=True)
+
+    @flow.node("Display Name")
+    def fn() -> Any:
+        return Result("v")
+
+    flow.execute(fn())
+    events = _all_events(capsys.readouterr().out)
+    assert events[0]["type"] == "graph"
+    # 节点 id 是函数名，显示名来自 @flow.node("...")
+    assert events[0]["graph"]["nodes"] == {"fn": {"name": "Display Name"}}
+    result_event = next(e for e in events if e["type"] == "node_result")
+    assert (result_event["nodeId"], result_event["result"]) == ("fn", "v")

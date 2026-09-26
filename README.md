@@ -55,7 +55,7 @@ flow.execute(summarize())
 
 缓存默认启用。可以使用 `Flow(..., cache=False)` 关闭缓存。缓存文件位于 `.alkaid0/workflow.db`；设置 `ALKAID0_WORKFLOW_SESSION_ID` 可以隔离不同会话。
 
-可以通过 `Flow(..., report=True)` 或环境变量 `ALKAID0_WORKFLOW_REPORT=1` 开启 JSONL 状态上报。`Flow.run()` 会自动开启上报。事件包括 `graph`、`node`、`agent`、`agents_start`、`node_code` 和 `node_log`。
+可以通过 `Flow(..., report=True)` 或环境变量 `ALKAID0_WORKFLOW_REPORT=1` 开启 JSONL 状态上报。`Flow.run()` 会自动开启上报。事件包括 `graph`、`node`、`node_result`、`agent`、`agents_start`、`node_code` 和 `node_log`。
 
 ## 示例
 

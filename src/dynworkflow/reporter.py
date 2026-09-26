@@ -156,6 +156,20 @@ class StatusReporter:
             "code": code,
         }])
 
+    def report_node_result(self, workflow_id: str, node_id: str,
+                           result: Any) -> None:
+        """report_node_result() 上报节点终值（`Result` 携带的 value）。
+
+        值不可 JSON 序列化时由 `emit` 的 `default=str` 兜底；上报失败不影响执行。
+        """
+        self.emit([{
+            "type": "node_result",
+            "time": _utc_now(),
+            "workflow": workflow_id,
+            "nodeId": node_id,
+            "result": result,
+        }])
+
     def report_graph(self, workflow_id: str, graph: Graph) -> None:
         """report_graph() 上报 Flow 生成的流程图（set 序列化为有序列表）。"""
         self.emit([{
