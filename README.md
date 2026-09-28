@@ -37,7 +37,7 @@ flow.execute(summarize())
 - `Flow`：创建并执行工作流。
 - `Flow.node(name)`：注册节点函数。
 - `Flow.execute(*tasks)`：在当前进程中执行任务，并在所有节点结束后抛出节点异常。
-- `Flow.run(*tasks)`：在 fork 子进程中运行工作流，并监听 stdin 中的 JSONL 控制命令。
+- `Flow.run(*tasks)`：运行工作流，并监听 stdin 中的 JSONL 控制命令。支持 fork 的平台在 fork 子进程中运行，其他平台（如 Windows）在当前进程中运行。
 - `Agent`：描述一次 Agent 请求。
 - `MultiAgent`：并发运行多个 Agent 请求。
 - `AgentClient`：连接 ACP WebSocket 端点。

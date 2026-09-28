@@ -1,6 +1,6 @@
 [project]
 name = "dynworkflow"
-version = "0.1.3"
+version = "0.1.4"
 description = "Dynamic Workflow Library for Alkaid0"
 readme = "README.md"
 authors = [{ name = "cxykevin", email = "cxykevin@yeah.net" }]

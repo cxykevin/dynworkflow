@@ -11,6 +11,7 @@ import threading
 import time
 import ast
 import textwrap
+import traceback
 from enum import Enum
 
 from .agent import (Agent, AgentClientInterface, MultiAgent, AgentStatus,
@@ -627,7 +628,11 @@ class Flow:
         self._raise_exceptions()
 
     def run(self, *tasks: Execute) -> NoReturn:
-        """Node.run() 在 fork 子进程执行工作流，主进程监听 stdin JSONL。"""
+        """Flow.run() 运行工作流，同时监听 stdin JSONL 控制命令。
+
+        支持 fork 的平台（Linux/macOS）在 fork 子进程内执行工作流；
+        没有 fork 的平台（如 Windows）在当前进程内执行工作流。
+        """
         sys.stdout.write("\x1edynworkflow\x1f\n")
         sys.stdout.flush()
         self._report = True
@@ -635,6 +640,15 @@ class Flow:
             self._reporter = optional_reporter(True)
         if self._agent is None:
             raise ValueError("No availble agent found!")
+        if "fork" in multiprocessing.get_all_start_methods():
+            self._run_forked(tasks)
+        else:
+            # Windows 等平台既没有 fork，spawn 又无法序列化 Flow 状态与
+            # 节点函数，因此退化为在当前进程内执行工作流。
+            self._run_in_current_process(tasks)
+
+    def _run_forked(self, tasks: tuple[Execute, ...]) -> NoReturn:
+        "_run_forked() 在 fork 子进程执行工作流，当前进程监听 stdin JSONL。"
         control: Any = multiprocessing.get_context("fork").Queue()
         process = multiprocessing.get_context("fork").Process(
             target=self._execute_child, args=(tasks, control))
@@ -671,6 +685,36 @@ class Flow:
                 process.join(2)
         # Preserve a non-zero exit status when the child failed unexpectedly.
         sys.exit(process.exitcode if process.exitcode is not None else 0)
+
+    def _run_in_current_process(self, tasks: tuple[Execute, ...]) -> NoReturn:
+        "_run_in_current_process() 在没有 fork 的平台于当前进程内执行工作流，"
+        "stdin 由 daemon 线程转发到控制队列。"
+        control: Any = queue.Queue()
+
+        def read_stdin() -> None:
+            try:
+                for line in sys.stdin:
+                    try:
+                        command = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(command, dict):
+                        command = cast(dict[str, str], command)
+                        control.put(command)
+                        if command.get("cmd") == "shutdown":
+                            return
+            finally:
+                # stdin 结束视为关闭请求，与 fork 版本父进程的清理行为一致。
+                control.put({"cmd": "shutdown"})
+
+        threading.Thread(target=read_stdin, daemon=True).start()
+        try:
+            self._execute_child(tasks, control)
+        except BaseException:
+            # 保留非零退出码，行为与 fork 子进程异常退出保持一致。
+            traceback.print_exc()
+            sys.exit(1)
+        sys.exit(0)
 
     def _execute_child(self, tasks: tuple[Execute, ...], control: Any) -> None:
         def listen() -> None:

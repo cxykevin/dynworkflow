@@ -34,7 +34,7 @@
 
 ## 线程与进程模型
 
-`Flow.execute()` 在当前进程中运行调度器，并为节点使用 daemon 线程。`Flow.run()` 为工作流启动 fork 子进程，父进程负责监听 stdin 控制命令和清理子进程。
+`Flow.execute()` 在当前进程中运行调度器，并为节点使用 daemon 线程。`Flow.run()` 在支持 fork 的平台为工作流启动 fork 子进程，父进程负责监听 stdin 控制命令和清理子进程；没有 fork 的平台（如 Windows）在当前进程内执行工作流，由 daemon 线程把 stdin 命令转发到控制队列。
 
 stdin 读取在 daemon 线程中执行，因为遍历 stdin 可能永久阻塞。父进程独立监控子进程是否存活，并在清理时发送关闭命令或强制终止子进程。
 

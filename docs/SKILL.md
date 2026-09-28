@@ -114,7 +114,7 @@ Independent nodes run concurrently. When a node fails, it is immediately marked 
 flow.run(start())
 ```
 
-`run()` executes the workflow in a forked child process while the parent listens for JSONL control commands on stdin. Reporting is enabled automatically by `run()`.
+`run()` executes the workflow in a forked child process on platforms that support `fork`, while the parent listens for JSONL control commands on stdin. On platforms without `fork` (such as Windows) it executes the workflow in the current process instead. Reporting is enabled automatically by `run()`.
 
 ## Caching
 
