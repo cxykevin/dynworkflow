@@ -30,7 +30,7 @@ def summarize() -> d.TaskGenerator:
 flow.execute(summarize())
 ```
 
-使用 `@flow.node(name)` 声明节点。普通节点可以返回 `None`、`Result` 或一个或多个下游 `Execute` 任务。生成器节点可以 `yield Agent` 或 `MultiAgent`，接收 Agent 结果后返回节点结果。
+使用 `@flow.node(name)` 声明节点。普通节点可以返回 `None`、`Result`、一个或多个下游 `Execute` 任务，或它们的组合（例如 `return d.Result(value), next_node(x=value)`）。`Result` 只记录本节点结果，不会阻止下游调度。生成器节点可以 `yield Agent` 或 `MultiAgent`，接收 Agent 结果后返回节点结果。
 
 ## 公共 API
 
@@ -41,7 +41,7 @@ flow.execute(summarize())
 - `Agent`：描述一次 Agent 请求。
 - `MultiAgent`：并发运行多个 Agent 请求。
 - `AgentClient`：连接 ACP WebSocket 端点。
-- `Result`：保存节点的最终结果。
+- `Result`：保存节点结果；可与下游任务同时返回。
 
 ## 执行语义
 

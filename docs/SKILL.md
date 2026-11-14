@@ -54,9 +54,11 @@ A node is scheduled only after every declared argument has been filled. If `val1
 Supported node return values:
 
 - `None`: finish the node.
-- `d.Result(value)`: store a terminal result.
+- `d.Result(value)`: store this node's result.
 - One downstream task: continue with one node.
 - A `list` or `tuple` of downstream tasks: continue with multiple nodes.
+- Any combination of one `d.Result(value)` and downstream tasks, for example `return d.Result(value), next_node(x=value)`. `Result` only stores the value and does not stop downstream scheduling.
+- Returning more than one `d.Result` from a single node is an error.
 
 ## Call Agents
 
@@ -104,6 +106,14 @@ A node can return multiple downstream tasks:
 
 ```python
 return first(value=1), second(value=2)
+```
+
+Store a result and continue scheduling downstream tasks in the same return value:
+
+```python
+@flow.node("Start")
+def start() -> d.NodeResult:
+    return d.Result("started"), next_step(val1=1)
 ```
 
 ## Run a Workflow

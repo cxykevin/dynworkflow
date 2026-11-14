@@ -414,3 +414,27 @@ def test_graph_nodes_use_display_name(
     assert events[0]["graph"]["nodes"] == {"fn": {"name": "Display Name"}}
     result_event = next(e for e in events if e["type"] == "node_result")
     assert (result_event["nodeId"], result_event["result"]) == ("fn", "v")
+
+
+def test_result_and_downstream_reported_together(
+        tmp_path: Any, monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.chdir(tmp_path)
+    flow = Flow("wfj", agent=cast(AgentClientInterface, FakeACP()),
+                cache=False, report=True)
+
+    @flow.node("head")
+    def head() -> Any:
+        return Result("head"), tail(x="1")
+
+    @flow.node("tail")
+    def tail(x: str) -> Any:
+        return Result(f"tail:{x}")
+
+    flow.execute(head())
+    events = _all_events(capsys.readouterr().out)
+    assert [(e["nodeId"], e["result"])
+            for e in events if e["type"] == "node_result"] == [
+        ("head", "head"), ("tail", "tail:1")]
+    assert [e["nodeId"] for e in events if e["type"] == "node"] == [
+        "head", "head", "tail", "tail"]

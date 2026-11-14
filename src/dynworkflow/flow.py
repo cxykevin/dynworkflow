@@ -44,7 +44,7 @@ class Graph(TypedDict):
 
 
 class Result:
-    "Result 向 Main Agent 返回结果"
+    "Result 保存节点结果；节点可同时继续调度下游任务"
 
     def __init__(self, result: Any) -> None:
         self.result_val = result
@@ -53,7 +53,7 @@ class Result:
         return f"Result({self.result_val})"
 
     def __str__(self) -> str:
-        return str(self.result)
+        return str(self.result_val)
 
     def result(self) -> Any:
         "Result.result() 获取结果"
@@ -77,20 +77,54 @@ class NodeStatus(Enum):
     ERROR = "error"      # 完成
 
 
+def _split_node_result(
+        ret: 'NodeResult') -> "tuple[list[Any], list[Execute]]":
+    '"_split_node_result() 拆分节点返回值为 (Result 值列表, 下游任务列表)"'
+
+    if ret is None:
+        return [], []
+    if isinstance(ret, (Result, Execute)):
+        items: list[Any] = [ret]
+    elif isinstance(ret, (list, tuple)):
+        items = list(ret)
+    else:
+        raise ValueError(f"Invalid node result: {ret!r}")
+    results: list[Any] = []
+    executes: list[Execute] = []
+    for item in items:
+        if isinstance(item, Result):
+            results.append(item.result())
+        elif isinstance(item, Execute):
+            executes.append(item)
+        else:
+            raise ValueError(f"Invalid node result item: {item!r}")
+    if len(results) > 1:
+        raise ValueError("A node may return at most one Result")
+    return results, executes
+
+
 def _describe_node_result(ret: 'NodeResult') -> "dict[str, Any] | None":
     '"_describe_node_result() 把节点返回值序列化为缓存描述符；不可缓存时返回 None'
 
-    if ret is None:
-        return {"kind": "none"}
-    if isinstance(ret, Result):
+    results, executes = _split_node_result(ret)
+    exec_items: list[dict[str, Any]] = [
+        {"node_id": item._node._node_id, "args": dict(item._args)}
+        for item in executes
+    ]
+    if not results:
+        if not exec_items:
+            return {"kind": "none"}
+        return {"kind": "executes", "items": exec_items}
+    if not exec_items:
         # value 含不可序列化对象时由 put_node 整体放弃写入
-        return {"kind": "result", "value": ret.result()}
-    items = list(ret) if isinstance(ret, (list, tuple)) else [ret]
-    exec_items: list[dict[str, Any]] = []
-    for item in items:
-        exec_items.append(
-            {"node_id": item._node._node_id, "args": dict(item._args)})
-    return {"kind": "executes", "items": exec_items}
+        return {"kind": "result", "value": results[0]}
+    items: list[dict[str, Any]] = [
+        {"kind": "result", "value": results[0]}]
+    items.extend(
+        {"kind": "execute", "node_id": item._node._node_id,
+         "args": dict(item._args)}
+        for item in executes)
+    return {"kind": "items", "items": items}
 
 
 class Node():
@@ -308,6 +342,9 @@ class Node():
             self._report_status(flow, NodeStatus.ERROR, dic)
             return
 
+        # 先校验返回值：多个 Result 或非法元素在此失败并转为节点错误
+        results, executes = _split_node_result(ret)
+
         self.status = NodeStatus.DONE
         # 推送：节点执行完成
         self._report_status(flow, NodeStatus.DONE, dic)
@@ -318,54 +355,69 @@ class Node():
             if descriptor is not None:
                 flow.cache.put_node(node_info, descriptor)
 
-        # 无返回值
-        if ret is None:
-            return
-        # 返回值处理
-        if isinstance(ret, Result):
-            value = ret.result()
+        # 记录 Result；与下游调度互不排斥，可同时生效
+        if results:
+            value = results[0]
             flow._result[self._node_id] = value
             # 推送：节点终值（宿主据此在 workflow 视图里展示 Result）
             self._report_result(flow, value)
-            return
 
         # 执行流程下一步
-        if isinstance(ret, Execute):
-            ret = [ret]
-        for i in ret:
-            i.run(flow)
+        for item in executes:
+            item.run(flow)
 
     def _replay_cached(self, flow: 'Flow', cached: dict[str, Any]) -> None:
-        "Node._replay_cached() 重放缓存的节点结果（终值或下游调度）"
+        "Node._replay_cached() 重放缓存的节点结果（终值/下游调度/两者组合）"
         kind = cached.get("kind")
         if kind == "none":
             return
         if kind == "result":
-            value = cached.get("value")
-            flow._result[self._node_id] = value
-            # 缓存命中同样上报终值，宿主视图与真实执行保持一致
-            self._report_result(flow, value)
+            self._replay_result(flow, cached.get("value"))
             return
+        known = {node._node_id: node for node in flow._nodes}
         if kind == "executes":
-            known = {node._node_id: node for node in flow._nodes}
             items = cached.get("items")
             if not isinstance(items, list):
                 items = []
-            items = cast(list[dict[str, Any]], items)
-            for item in items:
-                target_id = str(item.get("node_id"))
-                target = known.get(target_id)
-                if target is None:
+            self._replay_executes(flow, known,
+                                  cast(list[dict[str, Any]], items))
+            return
+        if kind == "items":
+            raw_items = cached.get("items")
+            if not isinstance(raw_items, list):
+                raw_items = []
+            for item in cast(list[dict[str, Any]], raw_items):
+                item_kind = item.get("kind")
+                if item_kind == "result":
+                    self._replay_result(flow, item.get("value"))
+                elif item_kind == "execute":
+                    self._replay_executes(flow, known, [item])
+                else:
                     raise ValueError(
-                        f"Cached target node not found: {target_id}")
-                # 重建调用点参数并走正常填充/调度路径，
-                # 完整保留跨节点部分参数累积语义。
-                args: Any = item.get("args")
-                args_value: dict[str, Any] = dict(cast(dict[str, Any], args)) if isinstance(
-                    args, dict) else {}
-                Execute(target, args_value).run(flow)
+                        f"Invalid cached node item kind: {item_kind!r}")
             return
         raise ValueError(f"Invalid cached node result kind: {kind!r}")
+
+    def _replay_result(self, flow: 'Flow', value: Any) -> None:
+        "_replay_result() 写入并上报缓存中的节点终值"
+        flow._result[self._node_id] = value
+        # 缓存命中同样上报终值，宿主视图与真实执行保持一致
+        self._report_result(flow, value)
+
+    def _replay_executes(self, flow: 'Flow', known: "dict[str, Node]",
+                         items: list[dict[str, Any]]) -> None:
+        "_replay_executes() 重放缓存中的下游调度"
+        for item in items:
+            target_id = str(item.get("node_id"))
+            target = known.get(target_id)
+            if target is None:
+                raise ValueError(f"Cached target node not found: {target_id}")
+            # 重建调用点参数并走正常填充/调度路径，
+            # 完整保留跨节点部分参数累积语义。
+            args: Any = item.get("args")
+            args_value: dict[str, Any] = dict(
+                cast(dict[str, Any], args)) if isinstance(args, dict) else {}
+            Execute(target, args_value).run(flow)
 
     def _create_thread_task(self, flow: 'Flow') -> threading.Thread:
         "Node.thread_tast() 启动线程"
@@ -441,11 +493,14 @@ type Agents = (
     MultiAgent |
     Agent
 )  # Agents 子 Agent 对象
-type NodeResult = (
+type NodeResultItem = (
     Execute |
-    list[Execute] |
-    tuple[Execute, ...] |
-    Result |
+    Result
+)  # NodeResultItem 节点返回的单个元素
+type NodeResult = (
+    NodeResultItem |
+    list[NodeResultItem] |
+    tuple[NodeResultItem, ...] |
     None
 )  # Nodes 节点返回对象
 type TaskGenerator = (Generator[
@@ -647,6 +702,17 @@ class Flow:
             # 节点函数，因此退化为在当前进程内执行工作流。
             self._run_in_current_process(tasks)
 
+    def _exit(self, code: int) -> NoReturn:
+        "_exit() 强制刷新输出并短暂等待后退出，避免宿主漏读最后一批事件"
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:
+            # 管道已关闭等情况不影响退出流程。
+            pass
+        time.sleep(0.2)
+        sys.exit(code)
+
     def _run_forked(self, tasks: tuple[Execute, ...]) -> NoReturn:
         "_run_forked() 在 fork 子进程执行工作流，当前进程监听 stdin JSONL。"
         control: Any = multiprocessing.get_context("fork").Queue()
@@ -684,7 +750,7 @@ class Flow:
                 process.terminate()
                 process.join(2)
         # Preserve a non-zero exit status when the child failed unexpectedly.
-        sys.exit(process.exitcode if process.exitcode is not None else 0)
+        self._exit(process.exitcode if process.exitcode is not None else 0)
 
     def _run_in_current_process(self, tasks: tuple[Execute, ...]) -> NoReturn:
         "_run_in_current_process() 在没有 fork 的平台于当前进程内执行工作流，"
@@ -713,8 +779,8 @@ class Flow:
         except BaseException:
             # 保留非零退出码，行为与 fork 子进程异常退出保持一致。
             traceback.print_exc()
-            sys.exit(1)
-        sys.exit(0)
+            self._exit(1)
+        self._exit(0)
 
     def _execute_child(self, tasks: tuple[Execute, ...], control: Any) -> None:
         def listen() -> None:

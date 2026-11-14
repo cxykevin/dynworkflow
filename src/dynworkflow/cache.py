@@ -4,8 +4,9 @@
 缓存内容分两类：
 - ``agent_cache``：Agent 运行结果（MultiAgent 按单个 agent 分别缓存），
   以及未正常结束会话的 ACP sessionId（供下次按需 ACP load 续跑）；
-- ``node_cache``：节点执行结果——终值（Result/None）或下游调度描述
-  （Execute 链序列化为 [目标节点 id + 调用时参数]，命中时重建重放）。
+- ``node_cache``：节点执行结果——终值（Result/None）、下游调度
+  （Execute 链序列化为 [目标节点 id + 调用时参数]），或两者的组合；
+  命中时重建重放。
 
 联合键统一为 [会话作用域 + 工作流名 + 节点 ID + 载荷 hash]；节点载荷
 包含函数源码体 hash（代码变更即失效）与全部有效参数。
@@ -204,11 +205,24 @@ class WorkflowCache:
             return False
         return self._put("agent_cache", info, serialized, extra_kind=kind)
 
+    @staticmethod
+    def _valid_execute_items(items: Any) -> bool:
+        """_valid_execute_items() 校验下游调度条目列表是否合法"""
+        if not isinstance(items, list):
+            return False
+        for item in items:
+            if (not isinstance(item, dict)
+                    or not isinstance(item.get("node_id"), str)
+                    or not isinstance(item.get("args"), dict)):
+                return False
+        return True
+
     def get_node(self, info: CacheKey) -> dict[str, Any] | None:
         """get_node() 查询节点条目。
 
-        返回形如 ``{"kind": "none"}``、``{"kind": "result", "value": ...}``
-        或 ``{"kind": "executes", "items": [{"node_id": ..., "args": ...}]}``；
+        返回形如 ``{"kind": "none"}``、``{"kind": "result", "value": ...}``、
+        ``{"kind": "executes", "items": [{"node_id": ..., "args": ...}]}``
+        或 ``{"kind": "items", "items": [...]}``（Result 与下游调度组合）；
         格式非法视为未命中。
         """
         conn = self._conn
@@ -232,17 +246,32 @@ class WorkflowCache:
         if not isinstance(parsed, dict):
             return None
         kind = parsed.get("kind")
-        if kind not in {"none", "result", "executes"}:
+        if kind not in {"none", "result", "executes", "items"}:
             return None
         if kind == "executes":
-            items = parsed.get("items")
-            if not isinstance(items, list):
+            if not self._valid_execute_items(parsed.get("items")):
                 return None
+        elif kind == "items":
+            items = parsed.get("items")
+            if not isinstance(items, list) or not items:
+                return None
+            result_count = 0
             for item in items:
-                if (not isinstance(item, dict)
-                        or not isinstance(item.get("node_id"), str)
-                        or not isinstance(item.get("args"), dict)):
+                if not isinstance(item, dict):
                     return None
+                item_kind = item.get("kind")
+                if item_kind == "result":
+                    if "value" not in item:
+                        return None
+                    result_count += 1
+                elif item_kind == "execute":
+                    if (not isinstance(item.get("node_id"), str)
+                            or not isinstance(item.get("args"), dict)):
+                        return None
+                else:
+                    return None
+            if result_count > 1:
+                return None
         return parsed
 
     def put_node(self, info: CacheKey, descriptor: dict[str, Any]) -> bool:

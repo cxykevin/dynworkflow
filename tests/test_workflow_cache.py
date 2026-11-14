@@ -6,6 +6,7 @@ ALKAID0_WORKFLOW_SESSION_ID 会话作用域、节点缓存、
 不支持 load 的客户端不写会话条目、损坏数据库降级。
 """
 
+import json
 import sqlite3
 from collections import Counter
 from typing import Any
@@ -385,3 +386,51 @@ def test_node_code_body_hash_invalidates_cache(
     f3.execute(c3(x=1))
     assert calls["calc"] == 2
     assert f3._result["calc"] == 3
+
+
+def test_result_and_downstream_cached_together(
+        tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Result 与下游 Execute 同时返回时也应作为组合描述符缓存并重放。"""
+    monkeypatch.chdir(tmp_path)
+    calls: Counter[str] = Counter()
+
+    def build() -> tuple[Flow, Any]:
+        flow = Flow("wf-joint")
+
+        @flow.node("head")
+        def head() -> Any:
+            calls["head"] += 1
+            return Result("head"), tail(x="1")
+
+        @flow.node("tail")
+        def tail(x: str) -> Any:
+            calls["tail"] += 1
+            return Result(f"tail:{x}")
+
+        return flow, head
+
+    f1, head1 = build()
+    f1.execute(head1())
+    assert f1._result["head"] == "head"
+    assert f1._result["tail"] == "tail:1"
+    assert calls == Counter({"head": 1, "tail": 1})
+
+    # 第二次执行：head 的组合描述符与 tail 的结果描述符都应命中
+    f2, head2 = build()
+    f2.execute(head2())
+    assert calls == Counter({"head": 1, "tail": 1})
+    assert f2._result["head"] == "head"
+    assert f2._result["tail"] == "tail:1"
+
+    # 缓存库中 head 保存的是 result + execute 组合描述符
+    db = tmp_path / ".alkaid0" / "workflow.db"
+    with sqlite3.connect(str(db)) as conn:
+        rows = [json.loads(str(row[0])) for row in conn.execute(
+            "SELECT value FROM node_cache WHERE node_id = 'head'")]
+    assert rows == [{
+        "kind": "items",
+        "items": [
+            {"kind": "result", "value": "head"},
+            {"kind": "execute", "node_id": "tail", "args": {"x": "1"}},
+        ],
+    }]

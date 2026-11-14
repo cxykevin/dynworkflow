@@ -73,13 +73,13 @@
 
 ### node_result
 
-节点函数返回 `Result(value)` 时发送（缓存命中重放同样发送），携带该节点的终值。
+节点函数返回 `Result(value)` 时发送（缓存命中重放同样发送），携带该节点的结果。即使同一节点继续调度下游任务，也会发送该事件。
 
 ```json
 {"type":"node_result","time":"...","workflow":"flow-1","nodeId":"scan_docs","result":"..."}
 ```
 
-`result` 为 `Result` 携带的值；不可 JSON 序列化时序列化为字符串。返回 `None` 或只返回下游任务的节点不发送该事件。
+`result` 为 `Result` 携带的值；不可 JSON 序列化时序列化为字符串。没有返回 `Result` 的节点不发送该事件；同一节点返回多个 `Result` 会被视为错误。
 
 ### agents_start
 
